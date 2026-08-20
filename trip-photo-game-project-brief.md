@@ -54,6 +54,16 @@ A naming brainstorm happened but did not converge on a final name. Ruled out: di
 - [x] `expo-router` and its 5 peer dependencies installed (`react-native-safe-area-context`, `react-native-screens`, `expo-linking`, `expo-constants`, `expo-status-bar`) — confirmed via successful terminal output
 - [x] `.npmrc` created with `legacy-peer-deps=true` — works around a known conflict in expo-router's bundled web tooling, unrelated to this app's actual usage
 - [x] `CLAUDE.md`, `trip-photo-game-concept-v5.md`, and this brief added to Claude project knowledge (corrected versions)
+- [x] `trips` and `members` tables + RLS policies + join/create RPCs (migration `20260820120000_trips_members.sql`)
+- [x] `batches`, `prompts`, `prompt_votes` tables + RLS policies (migration `20260820130000_batches_prompts.sql`)
+- [x] Admin approve/reject flow for user-added prompts (migration `20260820140000_prompt_approval.sql`)
+
+**Bugs found and fixed during the approve/reject session (2026-08-20) — a future session should know this happened, not just that the tables exist now:**
+- [x] `members` RLS policy recursion — a policy on `members` queried `members` itself, causing infinite recursion; fixed with a SECURITY DEFINER helper function (migration `20260820150000_fix_members_recursion.sql`)
+- [x] `prompts` RLS policy recursion — same class of bug, same fix pattern (migration `20260820160000_fix_prompts_recursion.sql`)
+- [x] Missing table-level `GRANT`s to `authenticated` — RLS alone doesn't grant access, every table needs an explicit `GRANT` in addition to its policies; this was missing project-wide and is now fixed (migration `20260820170000_grant_table_privileges.sql`)
+
+This is now a standing gotcha (see CLAUDE.md) — check for both of these (self-referencing RLS policies, missing grants) on every new table going forward, not just when something breaks.
 
 **Instructed but NOT confirmed done — verify before assuming any of this works:**
 - [ ] Expo Router manual wiring: `"main": "expo-router/entry"` in package.json, `app/_layout.tsx`, `app/index.tsx` — steps were given, execution was never confirmed
@@ -66,7 +76,8 @@ A naming brainstorm happened but did not converge on a final name. Ruled out: di
 
 **Not done, expected/deferred, not an oversight:**
 - [ ] Sign in with Apple — deferred, not configured on Supabase side yet; needs to happen before App Store submission, not before
-- [ ] Actual Postgres schema + RLS policies — only discussed conceptually (see §7), never written
+- [ ] `entries` and `entry_flags` tables + RLS policies — spelled out in v5.md §6.3, not yet built (this session's work, see §9)
+- [ ] `votes` table (entry-level voting for prompt winners) + RLS policies — not yet modeled at all, not even in v5.md §6.3's rough sketch
 - [ ] Auth flow UI (Google Sign-In button, email/password form, session handling) — not started
 - [ ] Final app name / bundle identifiers / package names
 - [ ] `tech-stack-v1.md` added to the repo itself (exists as a file, just not copied in yet)
@@ -81,12 +92,12 @@ Not empty. Contains the three docs plus a working Expo scaffold with the full lo
 
 ## 9. Immediate next step
 
-Two independent threads, neither blocks the other:
+Backend work is ahead of the scaffold thread — `trips`/`members`, `batches`/`prompts`/`prompt_votes`, and admin approve/reject are all done (see §6). Two independent threads remain, neither blocks the other:
 
-1. **Close out the scaffold** — confirm the Expo Router manual wiring, retry and confirm the failed package installs, add NativeWind, commit. Small, mechanical, should be quick to verify.
-2. **Start the real backend work** — build the `trips` and `members` tables plus their RLS policies. This is genuinely backend-only, verifiable directly through Supabase without any screen needing to exist, and doesn't depend on the scaffold being finished.
+1. **Close out the scaffold** — confirm the Expo Router manual wiring, retry and confirm the failed package installs, add NativeWind, commit. Small, mechanical, should be quick to verify. Still not started.
+2. **Continue the backend work — `entries` and `entry_flags` tables + RLS policies** (this session). Schema shape is already spelled out in v5.md §6.3; `thumbnail_url`/`full_res_url` are plain text columns for now since storage/upload is deferred until a frontend exists. Watch for the same two bug classes hit last session: self-referencing RLS recursion (use a SECURITY DEFINER helper) and missing table-level `GRANT`s.
 
-Once both are done, the next slice is prompts/entries, then votes, then the auth flow UI, then trip creation/joining UI — each as its own scoped pass, `/clear` between major features per the workflow already agreed on.
+After `entries`/`entry_flags`, the next step is `votes` (entry-level voting for prompt winners — not yet modeled anywhere, including v5.md §6.3), then the auth flow UI, then trip creation/joining UI — each as its own scoped pass, `/clear` between major features per the workflow already agreed on.
 
 ## 10. Ground rules for whoever works on this next
 
