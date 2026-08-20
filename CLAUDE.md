@@ -34,6 +34,8 @@ Flag anything that doesn't — don't just check whether the code looks reasonabl
 - Supabase Auth bills per monthly active user past the free tier (50k MAU) — irrelevant at this app's scale, but don't assume Auth is unconditionally free at any scale.
 - App name is not finalized. Don't let a placeholder harden into a bundle ID, package name, or store listing without confirming first.
 - If `npm install` hits an ERESOLVE peer-dependency error, check `.npmrc` first — `legacy-peer-deps=true` is already set project-wide because of a known conflict inside expo-router's bundled web/DOM tooling (unrelated to anything this app actually uses).
+- RLS policies that query their own table (e.g. a `members` policy querying `members`) cause infinite recursion — use a SECURITY DEFINER helper function instead of an inline self-referencing subquery.
+- Every table needs an explicit `GRANT` to `authenticated`, in addition to its RLS policies — RLS restricts what a GRANT allows, it doesn't replace needing the GRANT in the first place.
 
 ## Open product decisions — ask, don't assume
 
