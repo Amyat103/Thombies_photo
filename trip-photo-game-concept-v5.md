@@ -9,7 +9,7 @@ A trip-scoped group photo game. A group traveling together (or on a single day o
 ## 2. Core Loop
 
 1. **Create a trip** — name, cover photo, rough length (or "ongoing"), invite via a typeable room code. No dates required.
-2. **Admin starts the trip once** — a single "Start Trip" tap. A new batch of prompts (e.g. 3) appears automatically the moment the previous round's voting closes — not on a separate fixed timer.
+2. **Admin starts the trip once** — a single "Start Trip" tap. A new batch of prompts (e.g. 3) opens automatically after a gap once the previous batch's voting closes — not on a separate fixed timer, and not immediately (see 2a).
 3. **Submit within each prompt-batch's window.** One photo per prompt per user by default (admin can raise the cap — see 4.1). Voting opens according to the trip's voting-timing setting (see 2a).
 4. **Standings** update live as votes come in.
 5. **Trip wraps** — winners per prompt + an overall Trip MVP (most prompt wins), packaged as a shareable recap. A prompt that never got enough votes before its window closed still shows its submitted photos in the recap, just with no crowned winner — and doesn't count toward anyone's MVP tally.
@@ -22,6 +22,8 @@ The admin picks how the trip votes, set once per trip as a labeled setting — k
 
 - **End of Day (EOD)** — a 48-hour timer starts when a round begins. If the admin doesn't act, voting auto-triggers when the timer runs out. The admin can also manually close the round early, anytime within that window. (This resolves what earlier drafts described as a temporary "rolling 48-hour window" — that behavior turned out to be EOD's actual intended design, not a placeholder.)
 - **End of Trip (EOT)** — no fixed deadline. The admin manually triggers voting whenever the group's ready — typically once, often days after the trip itself has ended. Needs a rare auto-close backstop so a trip can't stay open indefinitely; this likely shares a mechanism with the Trip Wrap inactivity backstop (2b).
+
+A batch is its own entity, independent of calendar days — there's no assumption of "one batch per day." When a batch closes (voting ends, under either mode), the next batch doesn't open right away: there's a deliberate gap before it opens, starting at **4 hours**. That number is explicitly tunable later, not a structural decision worth debating now. This gap needs its own scheduled check to open the next batch once the wait elapses — the same category of job as the EOD 48-hour auto-close, to be built in a later session, not now.
 
 ---
 
@@ -148,18 +150,34 @@ Upside: this is what makes the cross-trip meta-game (4.3) — profile, trophy ca
 Trip
  ├─ id, name, cover_photo, created_by (permanent account), start_date?, end_date?, invite_code (room code), allow_self_vote (bool, default false), voting_mode (eod | eot), entry_cap_per_prompt (default 1)
  ├─ Members[]  (user_id — real account, display_name, joined_at)
- ├─ Days[]
- │    ├─ day_number
- │    └─ Prompts[]  (e.g. 3 per batch)
- │         ├─ text, category_tag, location_tag?, approval_status, added_by
+ ├─ Batches[]  (id, batch_number, opened_at, voting_deadline?, status: submitting|voting|closed, closed_at?, next_batch_opens_at?)
+ │    └─ Prompts[]  (~3 per batch, via prompts.batch_id — see below)
  │         ├─ Entries[]
  │         │    ├─ photo_url, submitted_by, submitted_at
  │         │    └─ Votes[] (voter_id, timestamp)
  └─ Recap — design deferred, post-MVP; table shape not yet decided
+
+Prompts (standalone table — bank templates and trip instances share it)
+ ├─ id
+ ├─ trip_id (nullable — null = reusable bank template, set = trip-specific instance)
+ ├─ batch_id (nullable — null until selected into an open batch)
+ ├─ text, category_tag, location_tag (nullable), source (generic | location | user)
+ ├─ approval_status (pending | approved | rejected), added_by (nullable), created_at
+
+Prompt_votes
+ ├─ prompt_id, user_id, created_at — primary key (prompt_id, user_id)
 ```
 Entry and vote caps are scoped per prompt-instance, not per category. Re-voting is allowed, not locked after the first vote — tap the same entry again to unvote.
 
 `entry_cap_per_prompt` and `voting_mode` are trip-level settings the admin controls. Entry cap defaults to 1.
+
+**Batches replace the old Days[] model.** A batch (~3 prompts) is its own entity, independent of calendar days — see 2a for the inter-batch gap and its `next_batch_opens_at` field. `voting_deadline` is only set for EOD-mode trips; EOT-mode batches leave it null and rely on the admin's manual trigger.
+
+**Bank vs. instance:** selecting a bank template (`trip_id` null) into a trip creates a **new** `prompts` row — `trip_id` set, `text` copied, the original template row untouched. Selecting an already-pending trip prompt (`trip_id` already set, `batch_id` still null) into a live batch is an **update to that same row** — setting `batch_id` — not a new row. This keeps `prompt_votes` correctly attached through the pending→live transition, since votes are cast against the trip-scoped row from the moment it's created, not from the moment it enters a batch.
+
+**Auto-approval:** `approval_status` is set to `approved` automatically at insert time when `source` is `generic` or `location` — only `source = 'user'` starts as `pending`, since location prompts are template-generated (not freeform user text) and don't need content moderation at MVP.
+
+`prompt_votes` exists to support the top-voted-approved-prompt selection path (§3), but automatic promotion of the top-voted prompt into an open batch slot is deferred logic, not built yet — same deferred bucket as the EOD auto-close and the inter-batch gap timer.
 
 ### 6.4 Photo handling
 
