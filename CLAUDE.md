@@ -1,6 +1,6 @@
 # Trip Photo Game
 
-React Native (Expo) + Expo Router app, Supabase backend (no custom API server). Full product spec and current build status: @trip-photo-game-concept-v4.md and @trip-photo-game-project-brief.md — read both before making any product or architecture decision that isn't already answered there. Ask, don't assume.
+React Native (Expo) + Expo Router app, Supabase backend (no custom API server). Full product spec and current build status: @trip-photo-game-concept-v5.md and @trip-photo-game-project-brief.md — read both before making any product or architecture decision that isn't already answered there. Ask, don't assume.
 
 ## Architecture
 
@@ -26,20 +26,18 @@ Flag anything that doesn't — don't just check whether the code looks reasonabl
 - `npx expo install <package>` — use this instead of `npm install` for any Expo-managed package; it resolves compatible versions automatically
 - `eas build --profile development` — local dev build
 
-_(test/lint/typecheck commands: fill in once they exist)_
+*(test/lint/typecheck commands: fill in once they exist)*
 
 ## Gotchas
 
 - RLS policy correctness is this app's actual security boundary — a missing or wrong policy is how one trip's data leaks into another's.
 - Supabase Auth bills per monthly active user past the free tier (50k MAU) — irrelevant at this app's scale, but don't assume Auth is unconditionally free at any scale.
 - App name is not finalized. Don't let a placeholder harden into a bundle ID, package name, or store listing without confirming first.
+- If `npm install` hits an ERESOLVE peer-dependency error, check `.npmrc` first — `legacy-peer-deps=true` is already set project-wide because of a known conflict inside expo-router's bundled web/DOM tooling (unrelated to anything this app actually uses).
 
 ## Open product decisions — ask, don't assume
 
-- Whether user-added prompts need admin approval before going live
-- Whether members vote on which user-added prompts enter rotation
-- Whether `voting_mode` (EOD/EOT) is trip-wide or per prompt-batch
-- Whether the trip-wide recap rolls up in-trip meta-superlatives
-- Final app name
+- Final app name — naming exploration never converged (see @trip-photo-game-project-brief.md §4)
+- Exact mechanics of the 15-day inactivity auto-wrap — still just a placeholder note in the spec, not designed
 
-See @trip-photo-game-project-brief.md §3–4 for full context on each.
+Everything else that used to be open here (prompt approval, prompt selection mechanism, voting_mode scope, recap rollup, account creation flow) is resolved — see trip-photo-game-concept-v5.md directly rather than this list.
