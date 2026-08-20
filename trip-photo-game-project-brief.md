@@ -44,22 +44,29 @@ A naming brainstorm happened but did not converge on a final name. Ruled out: di
 
 ## 6. Infrastructure & accounts — status
 
-**Done, already live:**
-- [x] Supabase project created, configured with RLS-safe defaults
-- [x] Google Sign-In wired into Supabase Auth (Web application OAuth client, confirmed working)
-- [x] Expo/EAS account created
-- [x] Google Play Console account created (full production path; identity + Android device verification in progress)
-- [x] Apple Developer account exists
+**Done, confirmed (verified via actual terminal output or screenshots, not just instructions given):**
+- [x] Supabase project created, RLS-safe security settings configured (Data API on, auto-expose-new-tables off, automatic RLS on)
+- [x] Google Sign-In wired into Supabase Auth (Web application OAuth client, credentials saved)
+- [x] Google Play Console account created (full production path, $25 paid, identity + Android device verification submitted, in progress)
+- [x] Apple Developer account exists (already had)
 - [x] GitHub repo created and cloned locally (`Thombies_photo`)
-- [x] Expo project scaffolded (blank TypeScript template, SDK 57)
-- [x] Expo Router installed and wired (`main: expo-router/entry`, root layout, index route)
-- [x] Supabase client, React Query, Zustand, NativeWind installed
-- [x] `.npmrc` with `legacy-peer-deps=true` — works around a known conflict in expo-router's bundled web tooling, unrelated to this app's actual usage
-- [x] `CLAUDE.md`, `trip-photo-game-concept-v5.md`, and this brief all present in the repo
+- [x] Expo project scaffolded (blank TypeScript template, SDK 57) — confirmed indirectly, since the subsequent `expo install` succeeded in an SDK 57 context
+- [x] `expo-router` and its 5 peer dependencies installed (`react-native-safe-area-context`, `react-native-screens`, `expo-linking`, `expo-constants`, `expo-status-bar`) — confirmed via successful terminal output
+- [x] `.npmrc` created with `legacy-peer-deps=true` — works around a known conflict in expo-router's bundled web tooling, unrelated to this app's actual usage
+- [x] `CLAUDE.md`, `trip-photo-game-concept-v5.md`, and this brief added to Claude project knowledge (corrected versions)
 
-**Not done:**
+**Instructed but NOT confirmed done — verify before assuming any of this works:**
+- [ ] Expo Router manual wiring: `"main": "expo-router/entry"` in package.json, `app/_layout.tsx`, `app/index.tsx` — steps were given, execution was never confirmed
+- [ ] `@supabase/supabase-js`, `@tanstack/react-query`, `zustand` — install *failed* with an ERESOLVE error; the `.npmrc` fix should resolve it, but the retry was never run/confirmed
+- [ ] NativeWind — not attempted at all yet, only discussed
+- [ ] `.env` with Supabase URL + anon key — not created
+- [ ] `npx expo lint` — not run
+- [ ] First git commit of the scaffold — not done
+- [ ] The three corrected docs copied into the actual local repo (not just Claude project knowledge) and committed
+
+**Not done, expected/deferred, not an oversight:**
 - [ ] Sign in with Apple — deferred, not configured on Supabase side yet; needs to happen before App Store submission, not before
-- [ ] Actual Postgres schema + RLS policies — only discussed conceptually (see §7), never written. This is the actual next step.
+- [ ] Actual Postgres schema + RLS policies — only discussed conceptually (see §7), never written
 - [ ] Auth flow UI (Google Sign-In button, email/password form, session handling) — not started
 - [ ] Final app name / bundle identifiers / package names
 - [ ] `tech-stack-v1.md` added to the repo itself (exists as a file, just not copied in yet)
@@ -74,7 +81,12 @@ Not empty. Contains the three docs plus a working Expo scaffold with the full lo
 
 ## 9. Immediate next step
 
-Backend-first, but scoped narrowly: build the `trips` and `members` tables plus their RLS policies — nothing else yet, no other tables, no frontend. This is genuinely backend-only work, verifiable directly through Supabase without any screen needing to exist. Once verified, the next slice is prompts/entries, then votes, then the auth flow UI, then trip creation/joining UI — each as its own scoped pass in the same session, `/clear` between major features per the workflow already agreed on.
+Two independent threads, neither blocks the other:
+
+1. **Close out the scaffold** — confirm the Expo Router manual wiring, retry and confirm the failed package installs, add NativeWind, commit. Small, mechanical, should be quick to verify.
+2. **Start the real backend work** — build the `trips` and `members` tables plus their RLS policies. This is genuinely backend-only, verifiable directly through Supabase without any screen needing to exist, and doesn't depend on the scaffold being finished.
+
+Once both are done, the next slice is prompts/entries, then votes, then the auth flow UI, then trip creation/joining UI — each as its own scoped pass, `/clear` between major features per the workflow already agreed on.
 
 ## 10. Ground rules for whoever works on this next
 
