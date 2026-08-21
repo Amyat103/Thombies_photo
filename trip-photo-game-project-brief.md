@@ -67,14 +67,17 @@ A naming brainstorm happened but did not converge on a final name. Ruled out: di
 
 This is now a standing gotcha (see CLAUDE.md) — check for both of these (self-referencing RLS policies, missing grants) on every new table going forward, not just when something breaks.
 
-**Instructed but NOT confirmed done — verify before assuming any of this works:**
-- [ ] Expo Router manual wiring: `"main": "expo-router/entry"` in package.json, `app/_layout.tsx`, `app/index.tsx` — steps were given, execution was never confirmed
-- [ ] `@supabase/supabase-js`, `@tanstack/react-query`, `zustand` — install *failed* with an ERESOLVE error; the `.npmrc` fix should resolve it, but the retry was never run/confirmed
-- [ ] NativeWind — not attempted at all yet, only discussed
-- [ ] `.env` with Supabase URL + anon key — not created
-- [ ] `npx expo lint` — not run
-- [ ] First git commit of the scaffold — not done
-- [ ] The three corrected docs copied into the actual local repo (not just Claude project knowledge) and committed
+**Closed out 2026-08-20 — verified directly (not from prior instructions), see the new gotchas below:**
+- [x] Expo Router manual wiring: `"main": "expo-router/entry"` was already set; `app/_layout.tsx` and `app/index.tsx` were genuinely missing (no `app/` dir existed) — created now. The stale root `App.tsx` + `index.ts` default-template files were deleted — `main` already bypassed them, so they were dead code, not a second valid entry point.
+- [x] `@supabase/supabase-js`, `@tanstack/react-query`, `zustand` — confirmed already installed and working (verified via `node_modules`, not just `package.json`) — the brief's claim that these failed to install was stale; they clearly succeeded at some point after the `.npmrc` fix and have been used throughout backend verification since.
+- [x] NativeWind v4.2.6 + Tailwind v3 — installed and wired (`tailwind.config.js`, `global.css`, `babel.config.js`, `metro.config.js`, `nativewind-env.d.ts`). Two non-obvious transitive gotchas hit and fixed along the way, worth knowing for next time:
+  - `babel-preset-expo` was present in `node_modules` but only nested under `node_modules/expo/node_modules/babel-preset-expo`, not hoisted to root — a root `babel.config.js` referencing it by name couldn't resolve it. Fixed by adding `babel-preset-expo@~57.0.7` as an explicit root devDependency, which forced npm to hoist/dedupe it.
+  - NativeWind's bundled `react-native-css-interop@0.2.6` unconditionally references `react-native-worklets/plugin` in its Babel config (a hardcoded string, no existence check) and unconditionally `require("react-native-reanimated")` in its runtime CSS-interop code — both regardless of whether the app actually uses Reanimated/worklets features. Without both packages installed, the bundler fails outright at babel-config-load time and again at module-resolution time. Installed `react-native-worklets` and `react-native-reanimated` (both via `npx expo install`, SDK-57-compatible versions) purely to satisfy this — not because the app uses either directly. Also added `worklets: false` to the `babel-preset-expo` preset options in `babel.config.js` to skip *that* preset's own (safely-gated) auto-detection, separate from the interop bug.
+- [x] `.env` with Supabase URL + anon key — was already present (`EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`), brief incorrectly listed this as not done.
+- [x] `npx expo start -c` — actually run and verified: iOS and Android bundles both build clean (`entry.bundle?platform=ios` / `=android` both return 200, ~1.7–1.8k modules, no babel/metro/NativeWind errors). Web bundling fails (`react-native-web` not installed) — expected and correct, not a bug: this app is mobile-only, web join/vote flow is explicitly out of MVP scope (v5.md §6.8).
+- [x] `npx expo lint` — checked, not configured (no eslint config file, no eslint packages anywhere in the tree). Per scope discipline, did not trigger the interactive `eslint-config-expo` installer to "fix" this — that's a separate scope decision, not part of finishing the scaffold.
+- [x] First git commit of the scaffold — done alongside this update.
+- [x] The three corrected docs (`CLAUDE.md`, `trip-photo-game-concept-v5.md`, this brief) are already in the actual local repo, not just Claude project knowledge — confirmed via `git log`.
 
 **Not done, expected/deferred, not an oversight:**
 - [ ] Sign in with Apple — deferred, not configured on Supabase side yet; needs to happen before App Store submission, not before
@@ -89,16 +92,15 @@ Plain CRUD (fetch prompts, submit photos, cast votes, read standings) → straig
 
 ## 8. Repo status
 
-Not empty. Contains the three docs plus a working Expo scaffold with the full locked stack installed and verified running (`npx expo start -c` confirmed both Expo Router and NativeWind functioning).
+Not empty. Contains the three docs plus a working Expo scaffold with the full locked stack installed and verified running — `npx expo start -c` actually run, iOS and Android bundles both confirmed clean (2026-08-20; see §6 for the transitive-dependency gotchas hit and fixed along the way).
 
 ## 9. Immediate next step
 
-Backend work is ahead of the scaffold thread — `trips`/`members`, `batches`/`prompts`/`prompt_votes`, admin approve/reject, and `entries`/`entry_flags` are all done (see §6). Two independent threads remain, neither blocks the other:
+Backend work and the scaffold are now both closed out (see §6) — `trips`/`members`, `batches`/`prompts`/`prompt_votes`, admin approve/reject, `entries`/`entry_flags`, and the Expo Router + NativeWind scaffold are all done. One thread remains:
 
-1. **Close out the scaffold** — confirm the Expo Router manual wiring, retry and confirm the failed package installs, add NativeWind, commit. Small, mechanical, should be quick to verify. Still not started.
-2. **Continue the backend work — `votes` table + RLS policies** (current/next slice). Schema shape is now spelled out in v5.md §6.3: primary key `(prompt_id, user_id)` (one active vote per member per prompt, not per entry), switching a vote is an `UPDATE` of `entry_id`, removing one is a `DELETE`, gated on the prompt's batch having `status='voting'` and on `allow_self_vote` for self-votes. Watch for the same two bug classes hit on every prior table: self-referencing RLS recursion (use a SECURITY DEFINER helper) and missing table-level `GRANT`s.
+1. **Continue the backend work — `votes` table + RLS policies** (current/next slice). Schema shape is now spelled out in v5.md §6.3: primary key `(prompt_id, user_id)` (one active vote per member per prompt, not per entry), switching a vote is an `UPDATE` of `entry_id`, removing one is a `DELETE`, gated on the prompt's batch having `status='voting'` and on `allow_self_vote` for self-votes. Watch for the same two bug classes hit on every prior table: self-referencing RLS recursion (use a SECURITY DEFINER helper) and missing table-level `GRANT`s.
 
-`votes` is the last table in the original `trips` → `prompts`/`batches` → `entries` → `votes` dependency chain — once it lands, remaining backend work is either the deferred cron/scheduling logic (EOD auto-close, inter-batch gap, 15-day inactivity auto-wrap) or the scaffold/frontend thread, not another new table. After `votes`, the next step is the auth flow UI, then trip creation/joining UI — each as its own scoped pass, `/clear` between major features per the workflow already agreed on.
+`votes` is the last table in the original `trips` → `prompts`/`batches` → `entries` → `votes` dependency chain — once it lands, remaining backend work is either the deferred cron/scheduling logic (EOD auto-close, inter-batch gap, 15-day inactivity auto-wrap) or the frontend thread, not another new table. After `votes`, the next step is the auth flow UI, then trip creation/joining UI — each as its own scoped pass, `/clear` between major features per the workflow already agreed on.
 
 ## 10. Ground rules for whoever works on this next
 
