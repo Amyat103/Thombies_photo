@@ -649,6 +649,115 @@ console.log('\n--- Votes introspection: policies + grants ---');
   record('has_table_privilege: authenticated has NO truncate/trigger/references on votes', ok, JSON.stringify(row));
 }
 
+console.log('\n--- Bank prompts verification ---');
+{
+  const { data, error } = await adminClient.from('prompts').select('*').is('trip_id', null);
+  const total = data?.length ?? 0;
+  const funniestCount = data ? data.filter((p) => p.text === 'Funniest Moment').length : 0;
+  const ok = !error && total === 30 && funniestCount === 1;
+  record(
+    'Bank prompts: exactly 30 rows total, exactly one "Funniest Moment"',
+    ok,
+    error ? error.message : `total=${total}, funniest_count=${funniestCount}`
+  );
+}
+
+console.log('\n--- Un-batching + promotion-guard verification ---');
+
+// Case 3: attempt a DIRECT batch-to-batch move on promptA, still live in
+// batch A (untouched since the entries/votes sections above) -- expect
+// rejection via the new "unset it first" trigger guard. Run this BEFORE
+// case 2 (un-batching promptA below), since it needs promptA to still
+// have a non-null batch_id going in.
+{
+  const { data, error } = await adminClient
+    .from('prompts')
+    .update({ batch_id: batchB.id })
+    .eq('id', promotedA.id)
+    .select();
+  const blocked = !!error && /unset it first/.test(error.message);
+  record(
+    'Case 3: direct batch-to-batch move on live prompt rejected ("unset it first")',
+    blocked,
+    error ? error.message : `unexpectedly succeeded: ${JSON.stringify(data)}`
+  );
+}
+
+// Case 2: admin un-batches promptA (batch_id: batchA -> null) -- expect
+// success, and confirm approval_status is untouched.
+{
+  const { data, error } = await adminClient
+    .from('prompts')
+    .update({ batch_id: null })
+    .eq('id', promotedA.id)
+    .select()
+    .single();
+  const ok = !error && data && data.batch_id === null && data.approval_status === 'approved';
+  record(
+    'Case 2: admin un-batches live prompt, approval_status untouched',
+    ok,
+    error ? error.message : `batch_id=${data?.batch_id}, approval_status=${data?.approval_status}`
+  );
+}
+
+// Case 4: a fresh, still-pending source='user' prompt (never approved).
+// Attempt to set its batch_id directly to a real batch, without touching
+// approval_status in the same statement -- expect rejection via the new
+// "only an approved prompt can be promoted" trigger guard. This is the
+// case that actually proves the fix: RLS alone would let this through
+// (approve_reject's USING matches the still-pending old row; promote_to_
+// batch's WITH CHECK matches the new non-null batch_id; neither policy
+// alone inspects both columns at once).
+let freshPending;
+{
+  const { data, error } = await memberClient
+    .from('prompts')
+    .insert({
+      trip_id: trip.id,
+      text: 'Swap an item of clothing with someone in the group',
+      category_tag: 'interaction',
+      source: 'user',
+      added_by: memberUserId,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(`fresh pending prompt insert failed: ${error.message}`);
+  freshPending = data;
+  console.log(`Fresh pending prompt created: ${freshPending.id}, approval_status=${freshPending.approval_status}`);
+}
+{
+  const { data, error } = await adminClient
+    .from('prompts')
+    .update({ batch_id: batchA.id })
+    .eq('id', freshPending.id)
+    .select();
+  const blocked = !!error && /only an approved prompt/.test(error.message);
+  record(
+    'Case 4: promoting a still-pending prompt directly into a batch rejected',
+    blocked,
+    error ? error.message : `unexpectedly succeeded: ${JSON.stringify(data)}`
+  );
+}
+
+// Case 5: sanity check the new guard doesn't over-block the legitimate
+// path. promptA is now approved + unbatched (from case 2 above) -- promote
+// it normally (null -> batchA) in one statement, approval_status untouched
+// at 'approved' throughout -- expect success.
+{
+  const { data, error } = await adminClient
+    .from('prompts')
+    .update({ batch_id: batchA.id })
+    .eq('id', promotedA.id)
+    .select()
+    .single();
+  const ok = !error && data && data.batch_id === batchA.id && data.approval_status === 'approved';
+  record(
+    'Case 5: legitimate promote (approved, null -> batch) still succeeds',
+    ok,
+    error ? error.message : `batch_id=${data?.batch_id}, approval_status=${data?.approval_status}`
+  );
+}
+
 console.log('\n--- Cleanup ---');
 {
   const { data, error } = await adminClient.from('trips').delete().eq('id', trip.id).select();
