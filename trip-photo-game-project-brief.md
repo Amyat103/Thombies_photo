@@ -57,6 +57,8 @@ A naming brainstorm happened but did not converge on a final name. Ruled out: di
 - [x] `trips` and `members` tables + RLS policies + join/create RPCs (migration `20260820120000_trips_members.sql`)
 - [x] `batches`, `prompts`, `prompt_votes` tables + RLS policies (migration `20260820130000_batches_prompts.sql`)
 - [x] Admin approve/reject flow for user-added prompts (migration `20260820140000_prompt_approval.sql`)
+- [x] `entries` and `entry_flags` tables + RLS policies (migration `20260820180000_entries.sql`)
+- [x] `authenticated` privilege lockdown fix across all seven tables — `trips`, `members`, `batches`, `prompts`, `prompt_votes`, `entries`, `entry_flags` — closing a TRUNCATE hole that existed on every one of them, not just the two new ones (migration `20260820190000_lock_down_authenticated_privileges.sql` — a fix, not a new feature; same standing gotcha as the recursion/grant bugs below)
 
 **Bugs found and fixed during the approve/reject session (2026-08-20) — a future session should know this happened, not just that the tables exist now:**
 - [x] `members` RLS policy recursion — a policy on `members` queried `members` itself, causing infinite recursion; fixed with a SECURITY DEFINER helper function (migration `20260820150000_fix_members_recursion.sql`)
@@ -76,8 +78,7 @@ This is now a standing gotcha (see CLAUDE.md) — check for both of these (self-
 
 **Not done, expected/deferred, not an oversight:**
 - [ ] Sign in with Apple — deferred, not configured on Supabase side yet; needs to happen before App Store submission, not before
-- [ ] `entries` and `entry_flags` tables + RLS policies — spelled out in v5.md §6.3, not yet built (this session's work, see §9)
-- [ ] `votes` table (entry-level voting for prompt winners) + RLS policies — not yet modeled at all, not even in v5.md §6.3's rough sketch
+- [ ] `votes` table (entry-level voting for prompt winners) + RLS policies — now modeled in v5.md §6.3, not yet built (current/next slice, see §9)
 - [ ] Auth flow UI (Google Sign-In button, email/password form, session handling) — not started
 - [ ] Final app name / bundle identifiers / package names
 - [ ] `tech-stack-v1.md` added to the repo itself (exists as a file, just not copied in yet)
@@ -92,12 +93,12 @@ Not empty. Contains the three docs plus a working Expo scaffold with the full lo
 
 ## 9. Immediate next step
 
-Backend work is ahead of the scaffold thread — `trips`/`members`, `batches`/`prompts`/`prompt_votes`, and admin approve/reject are all done (see §6). Two independent threads remain, neither blocks the other:
+Backend work is ahead of the scaffold thread — `trips`/`members`, `batches`/`prompts`/`prompt_votes`, admin approve/reject, and `entries`/`entry_flags` are all done (see §6). Two independent threads remain, neither blocks the other:
 
 1. **Close out the scaffold** — confirm the Expo Router manual wiring, retry and confirm the failed package installs, add NativeWind, commit. Small, mechanical, should be quick to verify. Still not started.
-2. **Continue the backend work — `entries` and `entry_flags` tables + RLS policies** (this session). Schema shape is already spelled out in v5.md §6.3; `thumbnail_url`/`full_res_url` are plain text columns for now since storage/upload is deferred until a frontend exists. Watch for the same two bug classes hit last session: self-referencing RLS recursion (use a SECURITY DEFINER helper) and missing table-level `GRANT`s.
+2. **Continue the backend work — `votes` table + RLS policies** (current/next slice). Schema shape is now spelled out in v5.md §6.3: primary key `(prompt_id, user_id)` (one active vote per member per prompt, not per entry), switching a vote is an `UPDATE` of `entry_id`, removing one is a `DELETE`, gated on the prompt's batch having `status='voting'` and on `allow_self_vote` for self-votes. Watch for the same two bug classes hit on every prior table: self-referencing RLS recursion (use a SECURITY DEFINER helper) and missing table-level `GRANT`s.
 
-After `entries`/`entry_flags`, the next step is `votes` (entry-level voting for prompt winners — not yet modeled anywhere, including v5.md §6.3), then the auth flow UI, then trip creation/joining UI — each as its own scoped pass, `/clear` between major features per the workflow already agreed on.
+`votes` is the last table in the original `trips` → `prompts`/`batches` → `entries` → `votes` dependency chain — once it lands, remaining backend work is either the deferred cron/scheduling logic (EOD auto-close, inter-batch gap, 15-day inactivity auto-wrap) or the scaffold/frontend thread, not another new table. After `votes`, the next step is the auth flow UI, then trip creation/joining UI — each as its own scoped pass, `/clear` between major features per the workflow already agreed on.
 
 ## 10. Ground rules for whoever works on this next
 

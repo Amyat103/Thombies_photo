@@ -153,7 +153,7 @@ Trip
  ├─ Batches[]  (id, batch_number, opened_at, voting_deadline?, status: submitting|voting|closed, closed_at?, next_batch_opens_at?)
  │    └─ Prompts[]  (~3 per batch, via prompts.batch_id — see below)
  │         ├─ Entries[]  (see Entries table below)
- │         │    ├─ Votes[] (voter_id, timestamp) — table not yet defined
+ │         │    ├─ Votes[] — via votes, see below
  │         │    └─ Flags[] — via entry_flags, see below
  └─ Recap — design deferred, post-MVP; table shape not yet decided
 
@@ -171,12 +171,17 @@ Entries
  ├─ id, prompt_id (FK -> prompts), submitted_by (FK -> auth.users)
  ├─ thumbnail_url (text), full_res_url (text), submitted_at
 
+Votes
+ ├─ prompt_id (FK -> prompts), entry_id (FK -> entries, on delete cascade), user_id (FK -> auth.users), created_at — primary key (prompt_id, user_id)
+
 Entry_flags
  ├─ entry_id (FK -> entries), user_id (FK -> auth.users), created_at — primary key (entry_id, user_id)
 ```
 `entries.thumbnail_url` and `full_res_url` are plain text columns for now — actual storage bucket setup and file upload are deferred until a frontend exists to do the real upload. This is a deliberate deferral, not an oversight; the columns exist so the schema shape is settled ahead of that work.
 
 `entry_flags` has the same shape as `prompt_votes` (composite primary key, no surrogate id) — one flag per user per entry. Unlike `prompt_votes` and photo-voting, flags are insert-only: there's no DELETE/UPDATE policy, so unflagging isn't possible. The composite PK just prevents double-flagging, not a toggle mechanism. Together with admin-delete on `entries`, this is what implements §6.8's two moderation requirements ("admin can delete any entry, any member can flag one — required for App Store review, guideline 1.2") — no longer deferred, now modeled directly in these two tables.
+
+`votes` implements entry-level voting for prompt winners — deliberately keyed differently from `prompt_votes` and `entry_flags`. Its primary key is `(prompt_id, user_id)`, not `(entry_id, user_id)`: a member holds at most one active vote per prompt, not one vote per entry, matching §4.1's "superlative-style voting" framing (each prompt is a single pick-your-favorite, not unlimited likes). Switching a vote to a different entry within the same prompt is an `UPDATE` of `entry_id` on that same row — `prompt_id`, `user_id`, and `created_at` are immutable once set — the same pattern as promoting a prompt into a batch (existing row's state moves, doesn't accumulate). Removing a vote entirely is a `DELETE`, same toggle spirit as `prompt_votes`. Casting or changing a vote requires the prompt's batch to have `status='voting'` (mirrors entries requiring `status='submitting'` — the two gates share the same `status` column, so they compose cleanly: the same flip that closes submission opens voting, no intermediate state needed). Voting for your own entry is blocked unless the trip's `allow_self_vote` is true — the column's first actual use since it was added in the very first migration. There's no separate results/tally table — standings are a query (`count(*) group by entry_id`), not stored state.
 
 Entry and vote caps are scoped per prompt-instance, not per category. Re-voting is allowed, not locked after the first vote — tap the same entry again to unvote.
 

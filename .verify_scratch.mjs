@@ -368,6 +368,287 @@ console.log(`Admin's own entry created (for delete/flag tests): ${entryAdmin.id}
   record('Admin DELETE of entry succeeds', ok, error ? error.message : `rows: ${data?.length ?? 0}`);
 }
 
+console.log('\n--- Votes setup: second admin entry on promptA, entry on promptB, flip batchA to voting ---');
+
+// Need a second admin entry on promptA -- the original (entryAdmin) was
+// deleted during the entries tests above -- so the member has an
+// admin-submitted entry to vote for. Insert it while batchA is still
+// 'submitting' (its current state since the entries tests never flipped
+// it), then flip batchA to 'voting' -- the "relevant batch" for the votes
+// tests below.
+const { data: entryAdminVotes, error: entryAdminVotesError } = await adminClient
+  .from('entries')
+  .insert({
+    prompt_id: promotedA.id,
+    submitted_by: adminUserId,
+    thumbnail_url: 'admin-votes-thumb.jpg',
+    full_res_url: 'admin-votes-full.jpg',
+  })
+  .select()
+  .single();
+if (entryAdminVotesError) throw new Error(`admin votes-entry insert failed: ${entryAdminVotesError.message}`);
+console.log(`Admin's entry for voting tests created: ${entryAdminVotes.id}`);
+
+// A "wrong prompt" entry, used later to prove entry_id must belong to
+// prompt_id. batchB is currently 'voting' (flipped earlier, in the
+// entries-setup section) and never accepted a submission -- flip it back
+// to 'submitting' just long enough to create one; nothing later depends
+// on batchB's status, so it's left as 'submitting' afterward.
+runSql(`update public.batches set status = 'submitting' where id = '${batchB.id}'::uuid;`);
+const { data: entryB1, error: entryB1Error } = await adminClient
+  .from('entries')
+  .insert({
+    prompt_id: promotedB.id,
+    submitted_by: adminUserId,
+    thumbnail_url: 'promptB-thumb.jpg',
+    full_res_url: 'promptB-full.jpg',
+  })
+  .select()
+  .single();
+if (entryB1Error) throw new Error(`promptB entry insert failed: ${entryB1Error.message}`);
+console.log(`Entry on promptB (different prompt, for the cross-prompt test) created: ${entryB1.id}`);
+
+// 1. Set the relevant batch (batchA, holding promptA) to 'voting'.
+runSql(`update public.batches set status = 'voting' where id = '${batchA.id}'::uuid;`);
+console.log('Batch A flipped to status=voting');
+
+console.log('\n--- Votes verification cases ---');
+
+// 3. Member attempts to vote for their OWN entry (entryA1) while
+// allow_self_vote is still false (default) -- expect rejection. Run this
+// BEFORE the member's first successful vote (case 2): the PK is
+// (prompt_id, user_id), so once a vote row exists for (promptA, member) a
+// second INSERT for the same pair would fail on the unique constraint
+// rather than the self-vote check, muddying the signal.
+{
+  const { data, error } = await memberClient
+    .from('votes')
+    .insert({ prompt_id: promotedA.id, entry_id: entryA1.id, user_id: memberUserId })
+    .select();
+  const blocked = !!error || !data || data.length === 0;
+  record(
+    'Member self-vote rejected while allow_self_vote=false',
+    blocked,
+    error ? error.message : `rows: ${data?.length ?? 0}`
+  );
+}
+
+// 2. Member votes for the admin's entry in that prompt -- expect success.
+{
+  const { data, error } = await memberClient
+    .from('votes')
+    .insert({ prompt_id: promotedA.id, entry_id: entryAdminVotes.id, user_id: memberUserId })
+    .select();
+  const ok = !error && data && data.length === 1;
+  record(
+    "Member votes for admin's entry succeeds",
+    ok,
+    error ? error.message : `rows: ${data?.length ?? 0}`
+  );
+}
+
+// Setup for case 9 (delete someone else's vote): admin casts a genuine
+// vote too, for the member's entry.
+{
+  const { error } = await adminClient
+    .from('votes')
+    .insert({ prompt_id: promotedA.id, entry_id: entryA1.id, user_id: adminUserId });
+  if (error) throw new Error(`admin vote insert (setup for case 9) failed: ${error.message}`);
+  console.log("Admin's own vote (for member's entry) created, for the delete-someone-else's-vote case");
+}
+
+// 4. Flip allow_self_vote to true, member votes for their own entry. The
+// member already has a vote row for (promptA, member) from case 2, so this
+// is necessarily an UPDATE (switch entry_id to entryA1), not a new INSERT
+// -- exactly the vote-switching path v5 §6.3 describes.
+runSql(`update public.trips set allow_self_vote = true where id = '${trip.id}'::uuid;`);
+{
+  const { data, error } = await memberClient
+    .from('votes')
+    .update({ entry_id: entryA1.id })
+    .eq('prompt_id', promotedA.id)
+    .eq('user_id', memberUserId)
+    .select();
+  const ok = !error && data && data.length === 1 && data[0].entry_id === entryA1.id;
+  record(
+    'Member self-vote succeeds after allow_self_vote=true (via UPDATE)',
+    ok,
+    error ? error.message : `resulting entry_id: ${data?.[0]?.entry_id}`
+  );
+}
+
+// 5. Attempt to insert a vote where entry_id belongs to a DIFFERENT prompt
+// than prompt_id -- expect rejection. Admin hasn't voted on promptA under
+// this (prompt_id, user_id) pair yet, so use admin as the tester:
+// prompt_id=promptA but entry_id=entryB1 (which belongs to promptB).
+{
+  const { data, error } = await adminClient
+    .from('votes')
+    .insert({ prompt_id: promotedA.id, entry_id: entryB1.id, user_id: adminUserId })
+    .select();
+  const blocked = !!error || !data || data.length === 0;
+  record(
+    'Vote with entry_id from a different prompt rejected',
+    blocked,
+    error ? error.message : `rows: ${data?.length ?? 0}`
+  );
+}
+
+// 6. Flip the batch to 'submitting', then 'closed' -- both insert and
+// update should be rejected in each state.
+for (const status of ['submitting', 'closed']) {
+  runSql(`update public.batches set status = '${status}' where id = '${batchA.id}'::uuid;`);
+  {
+    const { data, error } = await adminClient
+      .from('votes')
+      .insert({ prompt_id: promotedA.id, entry_id: entryA1.id, user_id: adminUserId })
+      .select();
+    const blocked = !!error || !data || data.length === 0;
+    record(
+      `Vote INSERT rejected while batch status='${status}'`,
+      blocked,
+      error ? error.message : `rows: ${data?.length ?? 0}`
+    );
+  }
+  {
+    const { data, error } = await memberClient
+      .from('votes')
+      .update({ entry_id: entryAdminVotes.id })
+      .eq('prompt_id', promotedA.id)
+      .eq('user_id', memberUserId)
+      .select();
+    const blocked = !!error || !data || data.length === 0;
+    record(
+      `Vote UPDATE rejected while batch status='${status}'`,
+      blocked,
+      error ? error.message : `rows: ${data?.length ?? 0}`
+    );
+  }
+}
+
+// 7. Flip status back to 'voting'; member updates their vote's entry_id to
+// a different valid entry in the same prompt -- expect success.
+runSql(`update public.batches set status = 'voting' where id = '${batchA.id}'::uuid;`);
+{
+  const { data, error } = await memberClient
+    .from('votes')
+    .update({ entry_id: entryAdminVotes.id })
+    .eq('prompt_id', promotedA.id)
+    .eq('user_id', memberUserId)
+    .select();
+  const ok = !error && data && data.length === 1 && data[0].entry_id === entryAdminVotes.id;
+  record(
+    'Member switches vote to a different valid entry (UPDATE) succeeds',
+    ok,
+    error ? error.message : `resulting entry_id: ${data?.[0]?.entry_id}`
+  );
+}
+
+// 8. Attempt to directly change prompt_id on an existing vote row (not
+// entry_id) -- expect the immutable-columns trigger exception.
+{
+  const { data, error } = await memberClient
+    .from('votes')
+    .update({ prompt_id: promotedB.id })
+    .eq('prompt_id', promotedA.id)
+    .eq('user_id', memberUserId)
+    .select();
+  const blocked = !!error;
+  record(
+    'Direct prompt_id change on existing vote rejected by immutable-columns trigger',
+    blocked,
+    error ? error.message : `unexpectedly succeeded: ${JSON.stringify(data)}`
+  );
+}
+
+// 9. Member deletes their own vote -- succeeds regardless of batch status.
+// Then attempt to delete someone ELSE's (admin's) vote -- expect 0 rows.
+{
+  const { data, error } = await memberClient
+    .from('votes')
+    .delete()
+    .eq('prompt_id', promotedA.id)
+    .eq('user_id', memberUserId)
+    .select();
+  const ok = !error && data && data.length === 1;
+  record('Member deletes own vote succeeds', ok, error ? error.message : `rows: ${data?.length ?? 0}`);
+}
+{
+  const { data, error } = await memberClient
+    .from('votes')
+    .delete()
+    .eq('prompt_id', promotedA.id)
+    .eq('user_id', adminUserId)
+    .select();
+  const blocked = !error && (!data || data.length === 0);
+  record(
+    "Member DELETE of another user's (admin's) vote affects 0 rows",
+    blocked,
+    error ? error.message : `rows: ${data?.length ?? 0}`
+  );
+}
+
+// 10. As a non-member (unauthenticated) client: SELECT returns nothing and
+// INSERT is rejected.
+{
+  const outsiderClient = createClient(url, key);
+  const { data: outsiderSelect, error: outsiderSelectError } = await outsiderClient
+    .from('votes')
+    .select('*')
+    .eq('prompt_id', promotedA.id);
+  const selectBlocked = !!outsiderSelectError || !outsiderSelect || outsiderSelect.length === 0;
+  record(
+    'Non-member/unauthenticated SELECT on votes returns nothing',
+    selectBlocked,
+    outsiderSelectError ? outsiderSelectError.message : `rows: ${outsiderSelect?.length ?? 0}`
+  );
+
+  const { data: outsiderInsert, error: outsiderInsertError } = await outsiderClient
+    .from('votes')
+    .insert({ prompt_id: promotedA.id, entry_id: entryAdminVotes.id, user_id: adminUserId })
+    .select();
+  const insertBlocked = !!outsiderInsertError || !outsiderInsert || outsiderInsert.length === 0;
+  record(
+    'Non-member/unauthenticated INSERT on votes rejected',
+    insertBlocked,
+    outsiderInsertError ? outsiderInsertError.message : `rows: ${outsiderInsert?.length ?? 0}`
+  );
+}
+
+console.log('\n--- Votes introspection: policies + grants ---');
+{
+  const rows = runSql(
+    `select policyname, cmd from pg_policies where schemaname = 'public' and tablename = 'votes' order by cmd;`
+  );
+  const cmds = rows.map((r) => r.cmd).sort();
+  const ok =
+    rows.length === 4 &&
+    JSON.stringify(cmds) === JSON.stringify(['DELETE', 'INSERT', 'SELECT', 'UPDATE']);
+  record('pg_policies: exactly 4 policies on votes (select/insert/update/delete)', ok, JSON.stringify(rows));
+}
+{
+  const rows = runSql(
+    `select privilege_type from information_schema.role_table_grants where table_schema = 'public' and table_name = 'votes' and grantee = 'authenticated' order by privilege_type;`
+  );
+  const privs = rows.map((r) => r.privilege_type).sort();
+  const ok = JSON.stringify(privs) === JSON.stringify(['DELETE', 'INSERT', 'SELECT', 'UPDATE']);
+  record(
+    'role_table_grants: authenticated has exactly select/insert/update/delete on votes',
+    ok,
+    JSON.stringify(privs)
+  );
+}
+{
+  const [row] = runSql(
+    `select
+       has_table_privilege('authenticated', 'public.votes', 'TRUNCATE')::text as truncate_priv,
+       has_table_privilege('authenticated', 'public.votes', 'TRIGGER')::text as trigger_priv,
+       has_table_privilege('authenticated', 'public.votes', 'REFERENCES')::text as references_priv;`
+  );
+  const ok = row.truncate_priv === 'false' && row.trigger_priv === 'false' && row.references_priv === 'false';
+  record('has_table_privilege: authenticated has NO truncate/trigger/references on votes', ok, JSON.stringify(row));
+}
+
 console.log('\n--- Cleanup ---');
 {
   const { data, error } = await adminClient.from('trips').delete().eq('id', trip.id).select();
